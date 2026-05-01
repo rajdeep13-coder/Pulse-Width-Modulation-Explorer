@@ -246,29 +246,29 @@ avrdude -c arduino -P COM3 -b 19200 -p m328p -U flash:w:pwm_demo.hex:i
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Mode | Fast PWM with ICR1 as TOP (Mode 14) | WGM1[3:0] = 1110 |
-| Prescaler | 256 | CS1[2:0] = 100 |
+| Prescaler | 64 | CS1[2:0] = 011 |
 | Clock Frequency | 16 MHz | |
-| PWM Frequency | 50 Hz | 16M / (256 × 1250) |
-| TOP Value (ICR1) | 1249 | Defines 20 ms period |
-| Timer Resolution | 16 µs/count | 256 / 16M |
+| PWM Frequency | 50 Hz | 16M / (64 × 5000) |
+| TOP Value (ICR1) | 4999 | Defines 20 ms period |
+| Timer Resolution | 4 µs/count | 64 / 16M |
 | Output Pin | OC1A (PB1) | Non-inverting mode |
-| Pulse Width Range | 62-125 counts | 1.0-2.0 ms |
+| Pulse Width Range | 250-500 counts | 1.0-2.0 ms |
 | Angle Range | 0° to 180° | Standard RC servo |
 
 **Servo Pulse Widths:**
 ```
-0°   (min):  1.0 ms = 62 counts   → OCR1A = 62
-90°  (mid):  1.5 ms = 93.75 counts → OCR1A = 94
-180° (max):  2.0 ms = 125 counts   → OCR1A = 125
+0°   (min):  1.0 ms = 250 counts   → OCR1A = 250
+90°  (mid):  1.5 ms = 375 counts   → OCR1A = 375
+180° (max):  2.0 ms = 500 counts   → OCR1A = 500
 
-Formula: OCR1A = 62 + (angle / 180) × 63
+Formula: OCR1A = 250 + (angle / 180) × 250
 ```
 
-**Why Prescaler 256?**
-- Prescaler 8 or 64 cause ICR1 to overflow 16-bit limit
-- Prescaler 256 gives ICR1 = 1,249 (fits in 16-bit)
-- 16 µs resolution per count is sufficient for servo control
-- Balances precision with frequency requirement
+**Why Prescaler 64?**
+- Timer tick is 4 µs/count, improving position granularity
+- For 20 ms period: ICR1 = (20 ms / 4 µs) - 1 = 4999
+- 1-2 ms servo window maps to 250-500 counts (251 usable steps)
+- Gives smoother motion than coarse 16 µs/count timing
 
 ### Timer2 - Millisecond Counter (CTC Mode, ISR-driven)
 
@@ -316,7 +316,7 @@ avrdude -c usbasp -p m328p -U flash:w:pwm_demo.hex:i
 | Component | Behavior | Duration |
 |-----------|----------|----------|
 | LED Fade | Ramps 0→255 then 255→0 continuously | ~8 seconds per full cycle |
-| Servo Sweep | Sweeps 0°→180°→0° continuously | ~3.8 seconds per full cycle |
+| Servo Sweep | Sweeps 0°→180°→0° continuously | ~15 seconds per full cycle |
 | Timing | Interrupt-driven 1 ms ticks | Background, CPU-independent |
 
 ---
@@ -361,9 +361,9 @@ OCR0A   = 0-255; // Duty cycle
 
 ```c
 TCCR1A = 0xA2;  // COM1A=10 (non-inverting), WGM1[1:0]=10
-TCCR1B = 0x1C;  // WGM1[3:2]=11, CS1=100 (prescaler 256)
-ICR1    = 1249;  // TOP (20 ms period, 50 Hz)
-OCR1A   = 62-125; // Pulse width (1.0-2.0 ms)
+TCCR1B = 0x1B;  // WGM1[3:2]=11, CS1=011 (prescaler 64)
+ICR1    = 4999;  // TOP (20 ms period, 50 Hz)
+OCR1A   = 250-500; // Pulse width (1.0-2.0 ms)
 ```
 
 ### Timer2 (Millis Counter)
@@ -382,7 +382,7 @@ TIMSK2 |= 0x02; // Enable COMPA interrupt
 | Issue | Solution |
 |-------|----------|
 | LED not fading | Check PD6 connection, verify TCCR0A/TCCR0B settings |
-| Servo not responding | Verify PB1 connection, check OCR1A range (62-125) |
+| Servo not responding | Verify PB1 connection, check OCR1A range (250-500) |
 | Incorrect frequency | Confirm F_CPU definition, verify crystal oscillator |
 | Program won't compile | Ensure avr-gcc is installed: `avr-gcc --version` |
 | Device won't program | Check USBASP driver, verify fuse settings |

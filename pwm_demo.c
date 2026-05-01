@@ -30,9 +30,9 @@ void timer0_init(void) {
 void timer1_init(void) {
     DDRB |= (1 << PB1);
     TCCR1A = (1 << COM1A1) | (0 << COM1A0) | (1 << WGM11) | (0 << WGM10);
-    TCCR1B = (0 << ICNC1) | (0 << ICES1) | (1 << WGM13) | (1 << WGM12) | (1 << CS12) | (0 << CS11) | (0 << CS10);
-    ICR1 = 1249;
-    OCR1A = 62;
+    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11) | (1 << CS10);
+    ICR1 = 4999;
+    OCR1A = 250;
 }
 
 /* Initialize Timer2 for millis counter (1 ms resolution) */
@@ -63,15 +63,15 @@ void update_led_fade(uint32_t now) {
 /* Non-blocking servo sweep update (call regularly in main loop) */
 void update_servo_sweep(uint32_t now) {
     static uint32_t last_update = 0;
-    static uint16_t pulse = 62;
+    static uint16_t pulse = 250;
     static int8_t dir = 1;
     
     if (now - last_update >= 30) {
         last_update = now;
         OCR1A = pulse;
         pulse += dir;
-        if (pulse >= 125) dir = -1;
-        else if (pulse <= 62) dir = 1;
+        if (pulse >= 500) dir = -1;
+        else if (pulse <= 250) dir = 1;
     }
 }
 
