@@ -1,0 +1,306 @@
+================================================================================
+ATmega328P PWM Demo - LED Fade & Servo Control
+DOCUMENTATION & TECHNICAL REFERENCE
+================================================================================
+
+PROGRAM OVERVIEW
+================================================================================
+This program demonstrates two distinct PWM modes on the ATmega328P:
+  1. Timer0 (8-bit) - LED fade on OC0A (PD6)
+  2. Timer1 (16-bit) - Servo control on OC1A (PB1)
+
+Clock: 16 MHz (external crystal)
+Compiler: avr-gcc
+MCU: ATmega328P
+
+================================================================================
+TIMER0 CONFIGURATION (LED Fade)
+================================================================================
+
+HARDWARE CONFIGURATION:
+  Output Pin: OC0A (PD6)
+  Timer Type: 8-bit counter
+  PWM Mode: Fast PWM
+
+REGISTER SETTINGS:
+  TCCR0A = 0xA3 (binary: 10100011)
+    - COM0A[1:0] = 10 (non-inverting Fast PWM mode)
+    - COM0B[1:0] = 00 (OC0B disconnected)
+    - WGM0[1:0]  = 11 (Fast PWM mode, TOP = 0xFF = 255)
+
+  TCCR0B = 0x03 (binary: 00000011)
+    - WGM02 = 0 (already configured in TCCR0A)
+    - CS0[2:0] = 011 (prescaler = 64)
+    - FOC0A/FOC0B = 0 (force compare disabled)
+
+  OCR0A: Duty cycle register (0-255)
+
+FREQUENCY CALCULATION:
+  F_PWM = F_CPU / (prescaler × 256)
+        = 16,000,000 / (64 × 256)
+        = 16,000,000 / 16,384
+        = 976.56 Hz
+
+  Timer overflow period = 256 / 976.56 ≈ 0.262 ms
+
+PRESCALER ANALYSIS:
+  Prescaler 1:   F_PWM = 62,500 Hz  (too high, imperceptible PWM control)
+  Prescaler 8:   F_PWM = 7,812.5 Hz (too fast, visible flicker ~128 ms)
+  Prescaler 64:  F_PWM = 976.56 Hz  ✓ CHOSEN (smooth at human perception ~50-100 ms)
+  Prescaler 256: F_PWM = 244.14 Hz  (acceptable but slight flicker risk)
+  Prescaler 1024: F_PWM = 61.04 Hz  (too slow, very visible flicker)
+
+CHOSEN PRESCALER (64) JUSTIFICATION:
+  The human eye can detect flicker rates below ~50-100 Hz. At 976.56 Hz, the
+  PWM switching is far above the flicker fusion threshold, resulting in smooth
+  perceived brightness changes. The 62 µs PWM period is imperceptible, while
+  the 8 ms software step increment creates smooth, continuous LED fading.
+
+LED FADE BEHAVIOR:
+  - Ramps OCR0A from 0 to 255 (increasing brightness)
+  - Each step: 8 ms delay
+  - 256 steps × 8 ms = ~2.048 seconds to ramp up
+  - Then ramps back down (255 to 0) in same time
+  - Total cycle: ~4.1 seconds
+  - Repeats indefinitely
+
+================================================================================
+TIMER1 CONFIGURATION (Servo Control)
+================================================================================
+
+HARDWARE CONFIGURATION:
+  Output Pin: OC1A (PB1)
+  Timer Type: 16-bit counter
+  PWM Mode: Fast PWM with ICR1 as TOP
+
+REGISTER SETTINGS:
+  TCCR1A = 0xA2 (binary: 10100010)
+    - COM1A[1:0] = 10 (non-inverting PWM mode)
+    - COM1B[1:0] = 00 (OC1B disconnected)
+    - WGM1[1:0]  = 10 (part of mode 14 setting)
+
+  TCCR1B = 0x1C (binary: 00011100)
+    - WGM1[3:2] = 11 (Fast PWM with ICR1 as TOP, mode 14)
+    - CS1[2:0]  = 100 (prescaler = 256)
+    - ICNC1/ICES1 = 0 (input capture not used)
+
+  ICR1 = 1249 (TOP value, sets PWM period)
+  OCR1A: Pulse width register (0-1249)
+
+FREQUENCY CALCULATION:
+  F_PWM = F_CPU / (prescaler × (ICR1 + 1))
+        = 16,000,000 / (256 × 1250)
+        = 16,000,000 / 320,000
+        = 50 Hz
+
+  Period = 1/50 = 20 ms
+
+TIMER1 CLOCK RESOLUTION:
+  Each timer count = prescaler / F_CPU = 256 / 16,000,000 = 16 µs
+
+SERVO PULSE TIMING:
+  Standard RC servo requires 50 Hz PWM with pulse widths:
+    - 1.0 ms  (0°)   → 62.5 counts  ≈ 62
+    - 1.5 ms  (90°)  → 93.75 counts ≈ 94
+    - 2.0 ms  (180°) → 125 counts   = 125
+
+  Pulse width range: 62-125 counts (63 count span for 180° rotation)
+  
+  Angle calculation:
+    OCR1A = 62 + (angle / 180) × 63
+
+PRESCALER ANALYSIS:
+  To achieve 50 Hz with a 16-bit timer:
+    ICR1 = (F_CPU / (prescaler × 50)) - 1
+
+  Prescaler 1:    ICR1 = 319,999  (exceeds 16-bit max of 65,535) ✗
+  Prescaler 8:    ICR1 = 39,999   (exceeds 16-bit max) ✗
+  Prescaler 64:   ICR1 = 4,999    (valid, but low pulse-width resolution)
+  Prescaler 256:  ICR1 = 1,249    ✓ CHOSEN (optimal resolution & period)
+  Prescaler 1024: ICR1 = 312      (too coarse for servo control)
+
+CHOSEN PRESCALER (256) JUSTIFICATION:
+  At prescaler 256, we get ICR1 = 1,249, which fits comfortably in the 16-bit
+  register. Each count represents 16 µs, giving us 63 counts spanning 180°, or
+  approximately 2.86° per count. This provides smooth servo control without
+  excessive quantization errors. Lower prescalers overflow; higher prescalers
+  have insufficient resolution for precise angle positioning.
+
+SERVO SWEEP BEHAVIOR:
+  - Starts at 62 counts (0°)
+  - Increments/decrements by 1 count per 30 ms step
+  - At 30 ms per step and 63 steps: ~1.89 seconds to sweep 0°→180°
+  - Returns to 0° in another ~1.89 seconds
+  - Total cycle: ~3.8 seconds
+  - Repeats indefinitely
+
+================================================================================
+COMPILATION & PROGRAMMING
+================================================================================
+
+PREREQUISITES:
+  - avr-gcc (AVR GCC toolchain)
+  - avrdude (AVR programming utility)
+  - USB programmer (USBASP, Arduino as ISP, or similar)
+  - ATmega328P development board or breadboard setup
+
+PINOUT REFERENCE (ATmega328P DIP-28):
+  Pin 6:  PD6 (OC0A) - LED Fade Output
+  Pin 9:  PB1 (OC1A) - Servo Control Output
+  Pin 7:  GND
+  Pin 8:  VCC (5V)
+  Pins 9-10: Crystal (16 MHz) + loading capacitors (22 pF)
+
+HARDWARE SETUP:
+  LED on PD6 (OC0A):
+    - Connect 220Ω resistor to LED anode
+    - LED cathode to GND
+    - Or connect to MOSFET for higher-power LED
+
+  Servo on PB1 (OC1A):
+    - Connect servo signal wire to PB1
+    - Connect servo GND to ATmega328P GND
+    - Connect servo power (5V) to dedicated supply if drawing >100 mA
+
+COMPILATION:
+  Basic compile:
+    avr-gcc -mmcu=atmega328p -DF_CPU=16000000UL -Os -o pwm_demo.elf pwm_demo.c
+
+  Compile with optimization flags:
+    avr-gcc -mmcu=atmega328p -DF_CPU=16000000UL -O2 -std=c99 -o pwm_demo.elf pwm_demo.c
+
+  Compile for LED fade only (PWM_MODE=0):
+    avr-gcc -mmcu=atmega328p -DF_CPU=16000000UL -DPWM_MODE=0 -Os -o pwm_demo.elf pwm_demo.c
+
+  Compile for servo only (PWM_MODE=1):
+    avr-gcc -mmcu=atmega328p -DF_CPU=16000000UL -DPWM_MODE=1 -Os -o pwm_demo.elf pwm_demo.c
+
+  Compile for both modes sequential (PWM_MODE=2, default):
+    avr-gcc -mmcu=atmega328p -DF_CPU=16000000UL -DPWM_MODE=2 -Os -o pwm_demo.elf pwm_demo.c
+
+GENERATE HEX FILE:
+  avr-objcopy -O ihex pwm_demo.elf pwm_demo.hex
+
+PROGRAM WITH AVRDUDE:
+  Via USBASP programmer:
+    avrdude -c usbasp -p m328p -U flash:w:pwm_demo.hex:i
+
+  Via Arduino as ISP:
+    avrdude -c arduino -P COM3 -b 19200 -p m328p -U flash:w:pwm_demo.hex:i
+    (Replace COM3 with your serial port)
+
+  Verify programming:
+    avrdude -c usbasp -p m328p -v
+
+FUSE SETTINGS (for 16 MHz external crystal):
+  Low fuse:  0xFF
+  High fuse: 0xDE
+  Extended fuse: 0x05
+
+  Set fuses with avrdude:
+    avrdude -c usbasp -p m328p -U lfuse:w:0xFF:m -U hfuse:w:0xDE:m -U efuse:w:0x05:m
+
+================================================================================
+REGISTER SUMMARY
+================================================================================
+
+TIMER0 (LED Fade):
+  TCCR0A: 0xA3 - COM0A=10 (non-inverting), WGM0=11 (Fast PWM)
+  TCCR0B: 0x03 - CS0=011 (prescaler 64)
+  OCR0A:  0x00-0xFF (duty cycle 0-255)
+  Output: PD6 (OC0A)
+
+  Register bit meanings:
+    COM0A1:COM0A0 = 10: Clear on Compare Match, Set at TOP
+    WGM01:WGM00 = 11: Fast PWM mode (TOP = 0xFF)
+    CS02:CS00 = 011: Clock source = clk/64
+
+TIMER1 (Servo Control):
+  TCCR1A: 0xA2 - COM1A=10 (non-inverting), WGM1[1:0]=10
+  TCCR1B: 0x1C - WGM1[3:2]=11 (Fast PWM, ICR as TOP), CS1=100 (prescaler 256)
+  ICR1:   1249 - TOP value (20 ms period, 50 Hz frequency)
+  OCR1A:  62-125 (pulse width in counts, 1.0-2.0 ms)
+  Output: PB1 (OC1A)
+
+  Register bit meanings:
+    COM1A1:COM1A0 = 10: Clear on Compare Match, Set at TOP
+    WGM13:WGM10 = 1110: Fast PWM with ICR1 as TOP (mode 14)
+    CS12:CS10 = 100: Clock source = clk/256
+
+================================================================================
+ADVANCED CONFIGURATION OPTIONS
+================================================================================
+
+To modify LED fade timing:
+  - Change TCCR0B prescaler value to adjust F_PWM
+  - Adjust _delay_ms() value in led_fade_demo() to change ramp speed
+  - Modify brightness increment/decrement logic for non-linear fades
+
+To modify servo speed:
+  - Adjust _delay_ms() value in servo_sweep_demo()
+  - Current: 30 ms per step → ~1.9 seconds for full sweep
+  - Faster servo: reduce delay to 20 ms (~1.3 seconds)
+  - Slower servo: increase delay to 50 ms (~3.1 seconds)
+
+To add more servos:
+  - Use OC1B (PB2) for second servo on Timer1
+  - Use Timer2 for a third servo (similar to Timer0 config)
+  - Set appropriate COM1B bits in TCCR1A
+
+To reverse servo direction:
+  - Change direction initialization from +1 to -1
+  - Or swap min/max pulse width limits
+
+================================================================================
+DEBUGGING NOTES
+================================================================================
+
+LED not fading?
+  - Check PD6 connection to LED
+  - Verify LED polarity (anode to 220Ω resistor, cathode to GND)
+  - Confirm timer0_init() is being called
+  - Check that OCR0A is being updated (add breakpoint)
+  - Verify 16 MHz crystal is properly connected with load capacitors
+
+Servo not responding?
+  - Check servo signal on PB1 with oscilloscope (should see 1-2 ms pulses at 50 Hz)
+  - Verify servo GND is connected to MCU GND
+  - Ensure servo power supply is adequate (>500 mA for standard servo)
+  - Try disconnecting servo and monitoring OCR1A register values
+  - Check that timer1_init() is being called
+
+PWM output visible but wrong frequency?
+  - Verify TCCR0B/TCCR1B prescaler bits
+  - Check F_CPU definition matches actual crystal frequency
+  - Use oscilloscope to measure actual PWM frequency vs. calculated
+
+Compilation errors?
+  - Ensure avr-gcc is installed: avr-gcc --version
+  - Check ATmega328P is spelled correctly (not "atmega328")
+  - Verify F_CPU is defined in command line
+  - If using IDE, add -mmcu=atmega328p and -DF_CPU=16000000UL flags
+
+================================================================================
+REFERENCES
+================================================================================
+
+Atmel AVR Instruction Set Manual
+  Section 14: 8-bit Timer/Counter0 with PWM
+  Section 16: 16-bit Timer/Counter1
+
+Atmel ATmega328P Datasheet (Microchip)
+  Section 14: Timer/Counter0
+  Section 15: Timer/Counter0 Registers
+  Section 16: Timer/Counter1 & Timer/Counter3
+
+Frequency formula derivation:
+  PWM Frequency = Clock Frequency / (Prescaler × (TOP + 1))
+  For Fast PWM: TOP = 255 (8-bit) or ICR value (16-bit)
+
+Servo pulse width reference (standard RC servo):
+  Min pulse: 1.0 ms   (full counter-clockwise, 0°)
+  Mid pulse: 1.5 ms   (center, 90°)
+  Max pulse: 2.0 ms   (full clockwise, 180°)
+  Repeat rate: 50 Hz (20 ms period, 50 µs per degree typical)
+
+================================================================================ 
