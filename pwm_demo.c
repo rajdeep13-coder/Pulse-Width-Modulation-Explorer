@@ -6,6 +6,15 @@
 #define F_CPU 16000000UL
 #include <avr/io.h>
 #include <util/delay.h>
+#include <avr/interrupt.h>
+
+/* Millis counter for non-blocking timing */
+volatile uint32_t millis = 0;
+
+/* Timer2 ISR: increments millis every 1 ms */
+ISR(TIMER2_COMPA_vect) {
+    millis++;
+}
 
 /* TIMER0: LED Fade (8-bit, OC0A on PD6, 976 Hz PWM) */
 
@@ -14,24 +23,6 @@ void timer0_init(void) {
     TCCR0A = (1 << COM0A1) | (0 << COM0A0) | (1 << WGM01) | (1 << WGM00);
     TCCR0B = (0 << FOC0A) | (0 << FOC0B) | (0 << WGM02) | (0 << CS02) | (1 << CS01) | (1 << CS00);
     OCR0A = 0;
-}
-
-void led_fade_demo(void) {
-    uint8_t brightness = 0;
-    int8_t direction = 1;
-    
-    while (1) {
-        OCR0A = brightness;
-        brightness += direction;
-        
-        if (brightness == 255) {
-            direction = -1;
-        } else if (brightness == 0) {
-            direction = 1;
-            // No break – continue forever
-        }
-        _delay_ms(8);
-    }
 }
 
 /* TIMER1: Servo Control (16-bit, OC1A on PB1, 50 Hz PWM) */
@@ -44,50 +35,61 @@ void timer1_init(void) {
     OCR1A = 62;
 }
 
-void servo_sweep_demo(void) {
-    uint16_t pulse_width = 62;
-    int8_t direction = 1;
+/* Initialize Timer2 for millis counter (1 ms resolution) */
+void init_millis(void) {
+    /* Timer2: CTC mode, prescaler 64, 16MHz -> 250kHz, OCR2A = 249 -> 1ms interrupt */
+    TCCR2A = (1 << WGM21);
+    TCCR2B = (1 << CS22);   /* prescaler 64 */
+    OCR2A = 249;
+    TIMSK2 = (1 << OCIE2A);
+    sei();
+}
+
+/* Non-blocking LED fade update (call regularly in main loop) */
+void update_led_fade(uint32_t now) {
+    static uint32_t last_update = 0;
+    static uint8_t brightness = 0;
+    static int8_t direction = 1;
     
-    while (1) {
-        OCR1A = pulse_width;
-        pulse_width += direction;
-        
-        if (pulse_width >= 125) {
-            direction = -1;
-        } else if (pulse_width <= 62) {
-            direction = 1;
-            // No break – continue forever
-        }
-        _delay_ms(30);
+    if (now - last_update >= 8) {
+        last_update = now;
+        OCR0A = brightness;
+        brightness += direction;
+        if (brightness == 255) direction = -1;
+        else if (brightness == 0) direction = 1;
+    }
+}
+
+/* Non-blocking servo sweep update (call regularly in main loop) */
+void update_servo_sweep(uint32_t now) {
+    static uint32_t last_update = 0;
+    static uint16_t pulse = 62;
+    static int8_t dir = 1;
+    
+    if (now - last_update >= 30) {
+        last_update = now;
+        OCR1A = pulse;
+        pulse += dir;
+        if (pulse >= 125) dir = -1;
+        else if (pulse <= 62) dir = 1;
     }
 }
 
 /* ============================================================================
- * MAIN PROGRAM
+ * MAIN PROGRAM - Non-blocking event loop with interrupt-driven timing
  * ============================================================================
- * Select which demo to run via preprocessor symbol PWM_MODE:
- *   0 = LED fade only
- *   1 = Servo sweep only
- *   2 = Both (sequential)
  */
 
 int main(void) {
-    #ifndef PWM_MODE
-    #define PWM_MODE 2
-    #endif
-    
-    #if (PWM_MODE == 0) || (PWM_MODE == 2)
     timer0_init();
-    led_fade_demo();
-    #endif
-    
-    #if (PWM_MODE == 1) || (PWM_MODE == 2)
     timer1_init();
-    servo_sweep_demo();
-    #endif
+    init_millis();
     
     while (1) {
-        _delay_ms(1000);
+        uint32_t now = millis;
+        update_led_fade(now);
+        update_servo_sweep(now);
+        /* CPU is free to do other tasks */
     }
     
     return 0;
